@@ -11,7 +11,7 @@ name: Refresh frontend certificate
 #            STORAGE_ACCOUNT (phase-2 renewal_workflow_settings)
 #   secrets: LETSENCRYPT_EMAIL
 # Repository vars (optional):
-#   CERT_RENEWAL_ENVIRONMENTS  JSON list of environments for scheduled runs (default ["dc-prod"])
+#   CERT_RENEWAL_ENVIRONMENTS  JSON list of environments for scheduled runs (unset: scheduled runs do nothing)
 #   CERT_RENEWAL_RUNS_ON       JSON runner spec (default "ubuntu-24.04"); use a
 #                              self-hosted runner label when the ACME storage
 #                              account / Key Vault only accept private traffic.
@@ -47,10 +47,12 @@ concurrency:
 jobs:
   renew:
     name: Renew (${{ matrix.environment }})
+    # Scheduled runs are a no-op until renewal is configured for a deployed collaborative.
+    if: github.event_name == 'workflow_dispatch' || vars.CERT_RENEWAL_ENVIRONMENTS != ''
     strategy:
       fail-fast: false
       matrix:
-        environment: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.environment) || vars.CERT_RENEWAL_ENVIRONMENTS || '["dc-prod"]') }}
+        environment: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.environment) || vars.CERT_RENEWAL_ENVIRONMENTS || '[]') }}
     runs-on: ${{ fromJSON(vars.CERT_RENEWAL_RUNS_ON || '"ubuntu-24.04"') }}
     environment: ${{ matrix.environment }}
     timeout-minutes: 20
