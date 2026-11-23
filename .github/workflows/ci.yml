@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "22"
+  PYTHON_VERSION: "3.12"
+  TERRAFORM_VERSION: "1.16.5"
+  # Output of `make build`; the app tooling owns its location.
+  BUNDLE_PATH: dist/bundle.json
+
+jobs:
+  build-test:
+    name: Build and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Build
+        run: make build
+      - name: Unit tests
+        run: make test
+
+  integration:
+    name: Sandbox integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      # The two-sandbox suite also starts the contract service (test/integration/conftest.py).
+      # Same branch by default (the PR's target branch on pull requests); override with the
+      # repository variable CONTRACT_SERVICE_REF.
+      CS_REF: ${{ vars.CONTRACT_SERVICE_REF || github.base_ref || github.ref_name }}
+      DEPA_CS_REPO: ${{ github.workspace }}/.deps/contract-service
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/contract-service
+          ref: ${{ env.CS_REF }}
+          path: .deps/contract-service
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            .deps/contract-service/package-lock.json
+      # Starts local CCF virtual sandboxes for both services and runs the end-to-end suite.
+      - name: Integration tests
+        run: make test-integration
+
+  terraform:
+    name: Terraform fmt/validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: fmt -check, init -backend=false, validate
+        run: deploy/terraform/scripts/validate.sh deploy/terraform
+
+  bundle:
+    name: Bundle digest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: build-test
+    permissions:
+      contents: read
+      id-token: write # build provenance attestation (push to main only)
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Build bundle
+        run: make build
+      - name: Compute digest
+        run: |
+          python -m pip install --require-hashes --no-deps -r .github/scripts/requirements-ci.txt
+          mkdir -p out
+          cp "${BUNDLE_PATH}" out/bundle.json
+          # Canonical digest from `make build` (dist/bundle_digest.txt), cross-checked by recomputation.
+          python .github/scripts/bundle_digest.py dist > out/bundle.digest
+          sha256sum out/bundle.json | tee out/bundle.json.sha256
+          echo "bundle digest: $(cat out/bundle.digest)" >> "${GITHUB_STEP_SUMMARY}"
+      - name: Attest build provenance
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: out/bundle.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kms-bundle
+          path: out/
+          if-no-files-found: error
+          retention-days: 30

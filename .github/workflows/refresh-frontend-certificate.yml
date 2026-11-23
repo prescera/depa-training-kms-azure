@@ -1,0 +1,157 @@
+name: Refresh frontend certificate
+
+# Renews the KMS gateway TLS certificate (OIDC issuer host) from Let's Encrypt
+# with the HTTP-01 challenge and imports it into Key Vault as a new version of
+# the frontend certificate. The Application Gateway references the versionless
+# secret ID and picks the new version up within ~4 hours.
+#
+# Per GitHub environment (protected, e.g. `dc-prod`):
+#   vars:    AZURE_CLIENT_ID (phase-1 ops_identity_client_id), AZURE_TENANT_ID,
+#            AZURE_SUBSCRIPTION_ID, DOMAIN, KEY_VAULT_NAME, CERT_NAME,
+#            STORAGE_ACCOUNT (phase-2 renewal_workflow_settings)
+#   secrets: LETSENCRYPT_EMAIL
+# Repository vars (optional):
+#   CERT_RENEWAL_ENVIRONMENTS  JSON list of environments for scheduled runs (default ["dc-prod"])
+#   CERT_RENEWAL_RUNS_ON       JSON runner spec (default "ubuntu-24.04"); use a
+#                              self-hosted runner label when the ACME storage
+#                              account / Key Vault only accept private traffic.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1" # weekly; renews only when the certificate is close to expiry
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub environment holding the target settings
+        required: true
+        default: dc-prod
+        type: string
+      acme_server:
+        description: Let's Encrypt endpoint (staging does not import into Key Vault)
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      force:
+        description: Renew even if the current certificate is not close to expiry
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: refresh-frontend-certificate
+  cancel-in-progress: false
+
+jobs:
+  renew:
+    name: Renew (${{ matrix.environment }})
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.environment) || vars.CERT_RENEWAL_ENVIRONMENTS || '["dc-prod"]') }}
+    runs-on: ${{ fromJSON(vars.CERT_RENEWAL_RUNS_ON || '"ubuntu-24.04"') }}
+    environment: ${{ matrix.environment }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # Azure OIDC login as the ops identity
+    env:
+      DOMAIN: ${{ vars.DOMAIN }}
+      KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
+      CERT_NAME: ${{ vars.CERT_NAME }}
+      STORAGE_ACCOUNT: ${{ vars.STORAGE_ACCOUNT }}
+      ACME_SERVER: ${{ inputs.acme_server || 'production' }}
+      FORCE: ${{ inputs.force || false }}
+      RENEW_BEFORE_DAYS: "30"
+      WORK_DIR: ${{ runner.temp }}/letsencrypt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate settings
+        run: |
+          for v in DOMAIN KEY_VAULT_NAME CERT_NAME STORAGE_ACCOUNT; do
+            [[ -n "${!v}" ]] || { echo "::error::environment variable ${v} is not set"; exit 1; }
+          done
+
+      - name: Azure login (OIDC)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check current certificate expiry
+        id: expiry
+        run: |
+          expires=$(az keyvault certificate show --vault-name "${KEY_VAULT_NAME}" --name "${CERT_NAME}" \
+            --query attributes.expires -o tsv)
+          issuer=$(az keyvault certificate show --vault-name "${KEY_VAULT_NAME}" --name "${CERT_NAME}" \
+            --query policy.issuerParameters.name -o tsv)
+          days=$(( ( $(date -d "${expires}" +%s) - $(date +%s) ) / 86400 ))
+          echo "current certificate: issuer=${issuer} expires=${expires} (${days} days)"
+          renew=false
+          # The bootstrap certificate is self-signed (issuer "Self"): always replace it.
+          if [[ "${FORCE}" == "true" || "${issuer}" == "Self" || ${days} -lt ${RENEW_BEFORE_DAYS} || "${ACME_SERVER}" == "staging" ]]; then
+            renew=true
+          fi
+          echo "renew=${renew}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install certbot
+        if: steps.expiry.outputs.renew == 'true'
+        run: |
+          if ! command -v certbot >/dev/null 2>&1; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q certbot
+          fi
+          certbot --version
+
+      - name: Request certificate (HTTP-01)
+        if: steps.expiry.outputs.renew == 'true'
+        env:
+          LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+        run: |
+          if [[ "${ACME_SERVER}" == "staging" ]]; then
+            server=https://acme-staging-v02.api.letsencrypt.org/directory
+          else
+            server=https://acme-v02.api.letsencrypt.org/directory
+          fi
+          mkdir -p "${WORK_DIR}"/{config,work,logs}
+          certbot certonly \
+            --manual \
+            --preferred-challenges http \
+            --non-interactive \
+            --agree-tos \
+            --email "${LETSENCRYPT_EMAIL}" \
+            --server "${server}" \
+            --key-type rsa --rsa-key-size 2048 \
+            -d "${DOMAIN}" \
+            --manual-auth-hook "${GITHUB_WORKSPACE}/deploy/letsencrypt/auth-hook.sh" \
+            --manual-cleanup-hook "${GITHUB_WORKSPACE}/deploy/letsencrypt/cleanup-hook.sh" \
+            --config-dir "${WORK_DIR}/config" \
+            --work-dir "${WORK_DIR}/work" \
+            --logs-dir "${WORK_DIR}/logs"
+          openssl x509 -in "${WORK_DIR}/config/live/${DOMAIN}/fullchain.pem" -noout -subject -issuer -dates
+
+      - name: Import into Key Vault
+        if: steps.expiry.outputs.renew == 'true' && env.ACME_SERVER == 'production'
+        run: |
+          umask 077
+          openssl pkcs12 -export \
+            -inkey "${WORK_DIR}/config/live/${DOMAIN}/privkey.pem" \
+            -in "${WORK_DIR}/config/live/${DOMAIN}/fullchain.pem" \
+            -out "${WORK_DIR}/cert.pfx" \
+            -passout pass:
+          az keyvault certificate import \
+            --vault-name "${KEY_VAULT_NAME}" \
+            --name "${CERT_NAME}" \
+            --file "${WORK_DIR}/cert.pfx" \
+            --password "" \
+            --query "{version:id, thumbprint:x509ThumbprintHex, expires:attributes.expires}" -o table
+
+      - name: Clean up
+        if: always()
+        run: rm -rf "${WORK_DIR}"

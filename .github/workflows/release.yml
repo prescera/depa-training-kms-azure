@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  PYTHON_VERSION: "3.12"
+  BUNDLE_PATH: dist/bundle.json
+
+jobs:
+  verify:
+    name: Unit and integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      # Same tag/branch of the contract service by default; override with CONTRACT_SERVICE_REF.
+      CS_REF: ${{ vars.CONTRACT_SERVICE_REF || github.ref_name }}
+      DEPA_CS_REPO: ${{ github.workspace }}/.deps/contract-service
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/contract-service
+          ref: ${{ env.CS_REF }}
+          path: .deps/contract-service
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            .deps/contract-service/package-lock.json
+      - run: make build
+      - run: make test
+      - run: make test-integration
+
+  publish:
+    name: Publish bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: verify
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Build bundle
+        run: make build
+      - name: Compute digest
+        run: |
+          python -m pip install --require-hashes --no-deps -r .github/scripts/requirements-ci.txt
+          mkdir -p out
+          cp "${BUNDLE_PATH}" "out/depa-kms-bundle-${GITHUB_REF_NAME}.json"
+          python .github/scripts/bundle_digest.py dist > "out/depa-kms-bundle-${GITHUB_REF_NAME}.digest"
+          (cd out && sha256sum ./*.json > SHA256SUMS)
+          echo "bundle digest: $(cat out/*.digest)" >> "${GITHUB_STEP_SUMMARY}"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: out/*.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kms-bundle-${{ github.ref_name }}
+          path: out/
+          if-no-files-found: error
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" out/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "KMS app bundle. Governance approves the digest in $(basename out/*.digest) via approve_app_digest; GET /info must report the same bundle_digest." \
+            --verify-tag
