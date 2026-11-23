@@ -1,0 +1,12 @@
+.terraform/
+.terraform.tfstate.lock.info
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+terraform.tfvars
+*.auto.tfvars
+# Local module-source overrides (see environments/dc/README.md).
+*_override.tf
+*_override.tf.json

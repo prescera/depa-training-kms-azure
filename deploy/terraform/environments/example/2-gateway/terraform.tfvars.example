@@ -1,0 +1,30 @@
+subscription_id = "00000000-0000-0000-0000-000000000000"
+tenant_id       = "00000000-0000-0000-0000-000000000000"
+
+# Paste `terraform output -json gateway_stack_inputs` from ../1-core.
+core = {
+  resource_group_name          = "depa-kms-prod-cin-rg"
+  base_name                    = "depa-kms-prod-cin"
+  gateway_hostname             = "kms.dc.example.org"
+  virtual_network_name         = "depa-kms-prod-cin-vnet"
+  gateway_subnet_name          = "depa-kms-prod-cin-vnet-gateway"
+  private_endpoint_subnet_name = "depa-kms-prod-cin-vnet-private-endpoints"
+  key_vault_name               = "depakmsprodcinkv"
+  frontend_certificate_name    = "depa-kms-prod-cin-frontend"
+  gateway_identity_name        = "depa-kms-prod-cin-agw-mi"
+  ops_identity_principal_id    = "00000000-0000-0000-0000-000000000000"
+  ledger_name                  = "depa-kms-prod-cin"
+}
+
+# From the manual Private Link Service step.
+ledger_private_link_service_alias = "depa-kms-prod-cin-pls.00000000-0000-0000-0000-000000000000.centralindia.azure.privatelinkservice"
+
+# Self-hosted runner used by the renewal workflow (optional).
+# runner_network = {
+#   subnet_id          = "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>"
+#   virtual_network_id = "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>"
+# }
+
+alert_email_addresses = {
+  oncall = "dc-oncall@example.org"
+}
