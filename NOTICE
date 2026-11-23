@@ -1,0 +1,15 @@
+DEPA Training v2 KMS
+Copyright (c) iSPIRT Foundation.
+
+This product is derived from the Azure privacy-sandbox KMS as adapted for
+DEPA-inferencing (azure-depa-inferencing-kms), Copyright (c) Microsoft
+Corporation, licensed under the MIT license. Files adapted from that code base
+carry both copyright notices: build tooling (rollup.config.js,
+build_bundle.js), the logger and endpoint/result pattern, ACL operator
+handling, SNP attestation verification, RSA-OAEP key wrapping and the CCF
+receipt endpoint. The recorded SEV-SNP attestation fixture
+(packages/depa-ccf-common/test/fixtures/snp-aci.json) is taken unchanged from
+that repository's test samples.
+
+Runtime dependency: @microsoft/ccf-app (Apache-2.0), Copyright (c) Microsoft
+Corporation.

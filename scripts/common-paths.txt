@@ -1,0 +1,13 @@
+# Paths vendored verbatim from depa-training-kms-azure into contract-service.
+packages/depa-ccf-common
+test/integration
+docker/Dockerfile.ccf-sandbox
+scripts/sandbox-up.sh
+scripts/sandbox-down.sh
+scripts/deploy-acl.sh
+scripts/check-common.sh
+scripts/common-paths.txt
+build_bundle.js
+rollup.config.js
+tsconfig.json
+tsconfig.test.json

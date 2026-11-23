@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "isolatedModules": true
+  },
+  "include": ["src/**/*", "packages/depa-ccf-common/src/**/*", "packages/depa-ccf-common/test/**/*", "test/unit/**/*"]
+}

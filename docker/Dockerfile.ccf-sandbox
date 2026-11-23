@@ -1,0 +1,16 @@
+# Copyright (c) Microsoft Corporation.
+# Copyright (c) iSPIRT Foundation.
+# Licensed under the MIT license.
+#
+# Local CCF virtual sandbox used for development and integration tests.
+# ccf-6.0.0-rc1 is the newest CCF 6.0 dev image published to GHCR; the app is
+# built against @microsoft/ccf-app 6.0.1 (the version pinned for ACL).
+ARG CCF_IMAGE=ghcr.io/microsoft/ccf/app/dev/virtual:ccf-6.0.0-rc1
+FROM ${CCF_IMAGE}
+ENV VENV_DIR=/opt/ccf-venv
+RUN python3 -m venv "${VENV_DIR}" && \
+  . "${VENV_DIR}/bin/activate" && \
+  pip install -U -q pip && \
+  pip install -q -U "ccf==$(sed 's/^ccf-//' /opt/ccf_virtual/share/VERSION_LONG)" && \
+  pip install -q -U -r /opt/ccf_virtual/bin/requirements.txt
+WORKDIR /workspace
