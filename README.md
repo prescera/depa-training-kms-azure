@@ -44,6 +44,21 @@ Governance can never modify a TDP's policy or keys: no such action exists.
    public key; the private key is released only to an attested workload whose measurement is in
    an approved release with family `inference`.
 
+## Dataset keys and release policies (how providers use this service)
+
+There is no key import: the KMS generates each dataset's HPKE key pair, and the provider
+encrypts locally with the public key. Only the dataset owner can set or change its release
+policy, and clean rooms obtain the private key only through the atomic `/keys/release` check.
+
+```bash
+depa --party bank-a dataset create-key <dataset template>   # key pair generated in the KMS
+depa --party bank-a dataset policy set <dataset template>   # owner-only release policy
+depa --party bank-a dataset encrypt <dataset template> --out ./enc
+depa --party bank-a dataset suspend bank-a/credit-applications   # kill switch
+```
+
+Walkthrough: [identities, contracts and keys](https://github.com/prescera/depa-training/blob/main/docs/guides/identities-contracts-keys.md).
+
 ## API
 
 All paths are under `/app` on ACL and on the CCF sandbox. "signed" = body `{"jws": …}` with a
