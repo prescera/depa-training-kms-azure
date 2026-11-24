@@ -37,8 +37,23 @@ resource "azurerm_confidential_ledger" "this" {
 # The ledger's TLS identity (CCF service certificate), published by the ACL
 # identity service. Used as the gateway's trusted backend root and pinned by
 # clients that talk to the ledger endpoint directly.
+# Azure returns identity_service_endpoint as the full identity URL for this ledger
+# (https://identity.confidential-ledger.core.azure.com/ledgerIdentity/<name>); append the
+# path only if a bare service URL is ever returned.
+locals {
+  identity_endpoint = trimsuffix(azurerm_confidential_ledger.this.identity_service_endpoint, "/")
+  identity_url      = strcontains(local.identity_endpoint, "/ledgerIdentity/") ? local.identity_endpoint : "${local.identity_endpoint}/ledgerIdentity/${azurerm_confidential_ledger.this.name}"
+}
+
 data "http" "ledger_identity" {
-  url = "${trimsuffix(azurerm_confidential_ledger.this.identity_service_endpoint, "/")}/ledgerIdentity/${azurerm_confidential_ledger.this.name}"
+  url = local.identity_url
+
+  # Transient errors only (connection failures, 5xx, 429); a 404 still fails the postcondition.
+  retry {
+    attempts     = 5
+    min_delay_ms = 2000
+    max_delay_ms = 15000
+  }
 
   request_headers = {
     Accept = "application/json"

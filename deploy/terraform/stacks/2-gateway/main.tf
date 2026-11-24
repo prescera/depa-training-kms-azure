@@ -57,8 +57,23 @@ data "azurerm_confidential_ledger" "this" {
   resource_group_name = var.core.resource_group_name
 }
 
+# Azure returns identity_service_endpoint as the full identity URL for this ledger
+# (https://identity.confidential-ledger.core.azure.com/ledgerIdentity/<name>); append the
+# path only if a bare service URL is ever returned.
+locals {
+  identity_endpoint = trimsuffix(data.azurerm_confidential_ledger.this.identity_service_endpoint, "/")
+  identity_url      = strcontains(local.identity_endpoint, "/ledgerIdentity/") ? local.identity_endpoint : "${local.identity_endpoint}/ledgerIdentity/${var.core.ledger_name}"
+}
+
 data "http" "ledger_identity" {
-  url = "${trimsuffix(data.azurerm_confidential_ledger.this.identity_service_endpoint, "/")}/ledgerIdentity/${var.core.ledger_name}"
+  url = local.identity_url
+
+  # Transient errors only (connection failures, 5xx, 429); a 404 still fails the postcondition.
+  retry {
+    attempts     = 5
+    min_delay_ms = 2000
+    max_delay_ms = 15000
+  }
 
   request_headers = {
     Accept = "application/json"
