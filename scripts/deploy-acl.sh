@@ -16,8 +16,13 @@
 #   ACL_CACERT   PEM file with the ledger TLS identity; if unset and ACL_NAME is set, it
 #                is fetched from the ACL identity service
 #   ACL_API_VERSION  default 2024-08-22-preview
+#   ACL_OPERATOR_ID  principal registered as ledger Administrator through the data-plane user
+#                API (default: the object id in the token); ACL_REGISTER_OPERATOR=0 skips it
 #
-# The caller must hold the ACL Administrator role. The bundle digest printed
+# The caller must hold the ACL Administrator role. Administrators granted when the ledger is
+# created (ARM/Terraform) are not visible to the application's role table; only users added
+# through PATCH /app/ledgerUsers are, as in the DEPA-inferencing KMS. The operator is therefore
+# registered there so that /gov/bootstrap can authorise it. The bundle digest printed
 # here must match a governance-approved digest (approve_app_digest) and the
 # value served by GET /app/info.
 
@@ -60,6 +65,27 @@ if [[ -z "$CACERT" ]]; then
   curl -sf "https://identity.confidential-ledger.core.azure.com/ledgerIdentity/${ACL_NAME}" \
     | jq -r '.ledgerTlsCertificate' > "$TMP/ledger.pem"
   CACERT="$TMP/ledger.pem"
+fi
+
+if [[ "${ACL_REGISTER_OPERATOR:-1}" != "0" ]]; then
+  OPERATOR_ID="${ACL_OPERATOR_ID:-}"
+  if [[ -z "$OPERATOR_ID" ]]; then
+    OPERATOR_ID="$(python3 -c '
+import base64, json, sys
+part = sys.argv[1].split(".")[1]
+print(json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))).get("oid", ""))
+' "$TOKEN")"
+  fi
+  [[ -n "$OPERATOR_ID" ]] || die "cannot determine the operator object id (set ACL_OPERATOR_ID)"
+  log "registering the operator as ledger Administrator through the data-plane user API"
+  status="$(curl -sS -o "$TMP/resp" -w '%{http_code}' --cacert "$CACERT" \
+    -X PATCH "$URL/app/ledgerUsers/${OPERATOR_ID}?api-version=${API_VERSION}" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/merge-patch+json" \
+    --data "$(jq -cn --arg id "$OPERATOR_ID" '{user_id: $id, assignedRoles: ["Administrator"]}')")"
+  if [[ "$status" != 2* ]]; then
+    cat "$TMP/resp" >&2
+    die "registering the operator failed with HTTP $status"
+  fi
 fi
 
 log "deploying bundle $DIGEST to $URL"
