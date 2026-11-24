@@ -26,11 +26,52 @@ function toColonFingerprint(hexId: string): string {
   return (hexId.toUpperCase().match(/.{1,2}/g) ?? []).join(":");
 }
 
-function aclRoles(userId: string): string[] {
-  const raw = ccf.kv[ACL_ROLE_MAPPING_TABLE].get(ccf.strToBuf(JSON.stringify(userId)));
-  if (raw === undefined) return [];
+function parseRoles(raw: ArrayBuffer): string[] {
   const roles = ccf.bufToJsonCompatible<unknown>(raw);
   return Array.isArray(roles) ? roles.filter((r): r is string => typeof r === "string") : [];
+}
+
+/** Role-table key as a plain string: keys are stored JSON-encoded ("\"id\""), but tolerate raw strings. */
+function decodeKey(raw: ArrayBuffer): string {
+  const text = ccf.bufToStr(raw);
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "string" ? parsed : text;
+  } catch {
+    return text;
+  }
+}
+
+/**
+ * Whether a role-table key denotes the Entra principal (object id, optionally qualified by its
+ * tenant). Exact, case-insensitive comparison of whole identifiers only.
+ */
+export function aclKeyMatchesEntraPrincipal(key: string, oid: string, tid: string): boolean {
+  const k = key.trim().toLowerCase();
+  const o = oid.toLowerCase();
+  const t = tid.toLowerCase();
+  return k === o || k === `${t}/${o}` || k === `${t}:${o}` || k === `${t}.${o}`;
+}
+
+/** Key shape with hex digits masked, so diagnostics reveal the format but no identifiers. */
+export function maskAclKey(key: string): string {
+  return key.replace(/[0-9a-fA-F]/g, "x");
+}
+
+function certificateRoles(fingerprint: string): string[] {
+  const raw = ccf.kv[ACL_ROLE_MAPPING_TABLE].get(ccf.strToBuf(JSON.stringify(fingerprint)));
+  return raw === undefined ? [] : parseRoles(raw);
+}
+
+function entraRoles(oid: string, tid: string): { roles: string[]; shapes: string[] } {
+  let roles: string[] = [];
+  const shapes = new Set<string>();
+  ccf.kv[ACL_ROLE_MAPPING_TABLE].forEach((value, rawKey) => {
+    const key = decodeKey(rawKey);
+    shapes.add(maskAclKey(key));
+    if (aclKeyMatchesEntraPrincipal(key, oid, tid)) roles = roles.concat(parseRoles(value));
+  });
+  return { roles, shapes: [...shapes].sort() };
 }
 
 export interface OperatorRequest {
@@ -72,8 +113,18 @@ export function requireOperator(request: ccfapp.Request): OperatorRequest {
     throw ApiError.unauthorized(`authentication policy ${String(policy)} is not accepted for operator calls`);
   }
   if (isAcl()) {
-    const key = policy === "jwt" ? id : toColonFingerprint(id);
-    if (!aclRoles(key).includes("Administrator")) {
+    if (policy === "jwt") {
+      const tid = String((caller as ccfapp.JwtAuthnIdentity).jwt.payload.tid);
+      const { roles, shapes } = entraRoles(id, tid);
+      if (!roles.includes("Administrator")) {
+        throw ApiError.forbidden(
+          `caller does not hold the ACL Administrator role (Entra object id not found as an Administrator; role table key shapes: ${shapes.join(", ") || "none"})`,
+        );
+      }
+      return { operator: id.toLowerCase(), body };
+    }
+    const key = toColonFingerprint(id);
+    if (!certificateRoles(key).includes("Administrator")) {
       throw ApiError.forbidden("caller does not hold the ACL Administrator role");
     }
     return { operator: key, body };
