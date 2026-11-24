@@ -137,3 +137,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "key_vault_network_default_action" {
+  description = "Key Vault firewall default action: Deny (production; run Terraform from key_vault_allowed_ip_ranges or key_vault_additional_subnet_ids) or Allow (pilots on GitHub-hosted runners; RBAC still applies)."
+  type        = string
+  default     = "Deny"
+}

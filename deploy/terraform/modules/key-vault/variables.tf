@@ -106,3 +106,14 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "network_default_action" {
+  description = "Vault firewall default action. Deny (production) admits only allowed_ip_ranges and allowed_subnet_ids, so Terraform must run from an allowed address such as a self-hosted runner subnet. Allow is for pilots run from GitHub-hosted runners; data-plane access still requires Entra RBAC."
+  type        = string
+  default     = "Deny"
+
+  validation {
+    condition     = contains(["Allow", "Deny"], var.network_default_action)
+    error_message = "network_default_action must be Allow or Deny."
+  }
+}

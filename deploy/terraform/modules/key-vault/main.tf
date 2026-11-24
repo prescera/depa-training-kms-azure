@@ -17,12 +17,14 @@ resource "azurerm_key_vault" "this" {
   public_network_access_enabled = true
   tags                          = var.tags
 
-  # The firewall denies everything except the listed operator IPs and subnets.
-  # Application Gateway is not a "trusted Microsoft service", so it reaches the
-  # vault through the service endpoint on its subnet.
+  # By default the firewall denies everything except the listed operator IPs and
+  # subnets. Application Gateway is not a "trusted Microsoft service", so it reaches
+  # the vault through the service endpoint on its subnet. network_default_action =
+  # "Allow" is for pilots run from GitHub-hosted runners, whose egress IPs change;
+  # data-plane access still requires Entra RBAC.
   network_acls {
     bypass                     = "None"
-    default_action             = "Deny"
+    default_action             = var.network_default_action
     ip_rules                   = local.ip_rules
     virtual_network_subnet_ids = var.allowed_subnet_ids
   }

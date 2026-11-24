@@ -70,6 +70,7 @@ module "key_vault" {
   tenant_id                  = var.tenant_id
   soft_delete_retention_days = var.key_vault_soft_delete_retention_days
   allowed_ip_ranges          = var.key_vault_allowed_ip_ranges
+  network_default_action     = var.key_vault_network_default_action
   allowed_subnet_ids         = concat([module.network.gateway_subnet_id], var.key_vault_additional_subnet_ids)
 
   member_certificate = {
