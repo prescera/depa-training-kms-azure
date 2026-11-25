@@ -89,6 +89,12 @@ variable "key_vault_additional_subnet_ids" {
   default     = []
 }
 
+variable "key_vault_purge_protection_enabled" {
+  description = "Key Vault purge protection. Keep true in production; demos set false (with purge_soft_delete_on_destroy in the azurerm provider) so a teardown frees the vault name."
+  type        = bool
+  default     = true
+}
+
 variable "key_vault_soft_delete_retention_days" {
   description = "Key Vault soft-delete retention in days."
   type        = number

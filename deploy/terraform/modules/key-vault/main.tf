@@ -12,7 +12,7 @@ resource "azurerm_key_vault" "this" {
   tenant_id                     = var.tenant_id
   sku_name                      = "premium"
   soft_delete_retention_days    = var.soft_delete_retention_days
-  purge_protection_enabled      = true
+  purge_protection_enabled      = var.purge_protection_enabled
   rbac_authorization_enabled    = true
   public_network_access_enabled = true
   tags                          = var.tags

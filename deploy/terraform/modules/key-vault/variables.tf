@@ -28,8 +28,14 @@ variable "tenant_id" {
   }
 }
 
+variable "purge_protection_enabled" {
+  description = "Purge protection (production: true; a deleted vault and its keys stay recoverable for the retention period and cannot be purged). Demos may disable it so a teardown can purge the vault and free its name."
+  type        = bool
+  default     = true
+}
+
 variable "soft_delete_retention_days" {
-  description = "Soft-delete retention in days (purge protection is always enabled)."
+  description = "Soft-delete retention in days."
   type        = number
   default     = 90
 
